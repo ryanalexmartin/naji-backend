@@ -51,13 +51,6 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	matchmaking(conn)
 }
 
-func disconnectClient(conn *websocket.Conn) {
-	clientsLock.Lock()
-	delete(clients, conn)
-	clientsLock.Unlock()
-	conn.Close()
-}
-
 func requeueClient(conn *websocket.Conn) {
 	waitingClientsLock.Lock()
 	defer waitingClientsLock.Unlock()
@@ -65,13 +58,6 @@ func requeueClient(conn *websocket.Conn) {
 	waitingClients = append(waitingClients, conn)
 	log.Printf("User %v added back to the waiting queue", conn.RemoteAddr())
 	matchmaking(conn)
-}
-
-func disconnectAndRequeue(conn *websocket.Conn) {
-	if _, ok := clients[conn]; ok {
-		disconnectClient(conn)
-		matchmaking(conn)
-	}
 }
 
 func matchmaking(conn *websocket.Conn) {
@@ -97,6 +83,27 @@ func matchmaking(conn *websocket.Conn) {
 	}
 }
 
+func removeClient(conn *websocket.Conn) {
+	clientsLock.Lock()
+	delete(clients, conn)
+	clientsLock.Unlock()
+
+	waitingClientsLock.Lock()
+	index := -1
+	for i, waitingClient := range waitingClients {
+		if waitingClient == conn {
+			index = i
+			break
+		}
+	}
+	if index != -1 {
+		waitingClients = append(waitingClients[:index], waitingClients[index+1:]...)
+	}
+	waitingClientsLock.Unlock()
+
+	log.Printf("Client %v removed", conn.RemoteAddr())
+}
+
 func relayMessages(src *websocket.Conn, dest *websocket.Conn) {
 	for {
 		_, msg, err := src.ReadMessage()
@@ -105,8 +112,8 @@ func relayMessages(src *websocket.Conn, dest *websocket.Conn) {
 			jsonMsg, _ := json.Marshal(disconnectMsg)
 			dest.WriteMessage(websocket.TextMessage, jsonMsg)
 
-			disconnectClient(src)
-			disconnectAndRequeue(dest)
+			removeClient(src)
+			removeClient(dest)
 			log.Printf("User %v disconnected", src.RemoteAddr())
 			break
 		}
