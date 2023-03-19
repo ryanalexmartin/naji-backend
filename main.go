@@ -120,13 +120,23 @@ func relayMessages(src *websocket.Conn, dest *websocket.Conn) {
 }
 
 func chatHandler(conn1 *websocket.Conn, conn2 *websocket.Conn) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	cleanup := func() {
+		wg.Done()
+		wg.Wait()
+		conn1.Close()
+		conn2.Close()
+	}
+
 	go func() {
+		defer cleanup()
 		relayMessages(conn1, conn2)
-		log.Printf("RELAYING MESSAGES FROM %v TO %v", conn1.RemoteAddr(), conn2.RemoteAddr())
 	}()
 	go func() {
+		defer cleanup()
 		relayMessages(conn2, conn1)
-		log.Printf("RELAYING MESSAGES FROM %v TO %v", conn2.RemoteAddr(), conn1.RemoteAddr())
 	}()
 }
 
