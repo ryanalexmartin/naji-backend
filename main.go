@@ -1,10 +1,17 @@
 package main
 
 import (
+	"bufio"
+	"encoding/csv"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
+	"math/rand"
 	"net/http"
+	"os"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -28,12 +35,20 @@ var upgrader = websocket.Upgrader{
 }
 
 func main() {
-	http.HandleFunc("/ws", handleConnections)
+	topics, err := loadTopics("topics.csv")
+	if err != nil {
+		log.Fatalf("Failed to load topics: %v", err)
+	}
+	rand.Seed(time.Now().UnixNano())
+
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		handleConnections(w, r, topics)
+	})
 	log.Println("Server started on :8080")
 	http.ListenAndServe(":8080", nil)
 }
 
-func handleConnections(w http.ResponseWriter, r *http.Request) {
+func handleConnections(w http.ResponseWriter, r *http.Request, topics []string) {
 	enableCors(&w)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -48,19 +63,19 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("New user connected: %v", conn.RemoteAddr())
 
-	matchmaking(conn)
+	matchmaking(conn, topics)
 }
 
-func requeueClient(conn *websocket.Conn) {
+func requeueClient(conn *websocket.Conn, topics []string) {
 	waitingClientsLock.Lock()
 	defer waitingClientsLock.Unlock()
 
 	waitingClients = append(waitingClients, conn)
 	log.Printf("User %v added back to the waiting queue", conn.RemoteAddr())
-	matchmaking(conn)
+	matchmaking(conn, topics)
 }
 
-func matchmaking(conn *websocket.Conn) {
+func matchmaking(conn *websocket.Conn, topics []string) {
 	waitingClientsLock.Lock()
 	defer waitingClientsLock.Unlock()
 
@@ -68,7 +83,8 @@ func matchmaking(conn *websocket.Conn) {
 		conn2 := waitingClients[0]
 		waitingClients = waitingClients[1:]
 
-		connectedMsg := message{Type: "status", Text: "You are now connected with another user."}
+		randomTopic := topics[rand.Intn(len(topics))]
+		connectedMsg := message{Type: "status", Text: fmt.Sprintf("Now connected! Let's talk about %s", randomTopic)}
 		jsonMsg, _ := json.Marshal(connectedMsg)
 
 		conn.WriteMessage(websocket.TextMessage, jsonMsg)
@@ -76,7 +92,7 @@ func matchmaking(conn *websocket.Conn) {
 
 		log.Printf("User %v connected with user %v", conn.RemoteAddr(), conn2.RemoteAddr())
 
-		go chatHandler(conn, conn2)
+		go chatHandler(conn, conn2, topics)
 	} else {
 		waitingClients = append(waitingClients, conn)
 		log.Printf("User %v added to the waiting queue", conn.RemoteAddr())
@@ -104,7 +120,7 @@ func removeClient(conn *websocket.Conn) {
 	log.Printf("Client %v removed", conn.RemoteAddr())
 }
 
-func relayMessages(src *websocket.Conn, dest *websocket.Conn) {
+func relayMessages(src *websocket.Conn, dest *websocket.Conn, topics []string) {
 	for {
 		_, msg, err := src.ReadMessage()
 		if err != nil {
@@ -118,6 +134,20 @@ func relayMessages(src *websocket.Conn, dest *websocket.Conn) {
 			break
 		}
 
+		var receivedMessage message
+		if err := json.Unmarshal(msg, &receivedMessage); err == nil {
+			if receivedMessage.Type == "disconnect" {
+				disconnectMsg := message{Type: "status", Text: "The other user has disconnected."}
+				jsonMsg, _ := json.Marshal(disconnectMsg)
+				dest.WriteMessage(websocket.TextMessage, jsonMsg)
+
+				removeClient(src)
+				removeClient(dest)
+				log.Printf("User %v disconnected", src.RemoteAddr())
+				break
+			}
+		}
+
 		err = dest.WriteMessage(websocket.TextMessage, msg)
 		if err != nil {
 			log.Printf("Write message error: %v", err)
@@ -126,7 +156,7 @@ func relayMessages(src *websocket.Conn, dest *websocket.Conn) {
 	}
 }
 
-func chatHandler(conn1 *websocket.Conn, conn2 *websocket.Conn) {
+func chatHandler(conn1 *websocket.Conn, conn2 *websocket.Conn, topics []string) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -139,12 +169,33 @@ func chatHandler(conn1 *websocket.Conn, conn2 *websocket.Conn) {
 
 	go func() {
 		defer cleanup()
-		relayMessages(conn1, conn2)
+		relayMessages(conn1, conn2, topics)
 	}()
 	go func() {
 		defer cleanup()
-		relayMessages(conn2, conn1)
+		relayMessages(conn2, conn1, topics)
 	}()
+}
+
+func loadTopics(filename string) ([]string, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var topics []string
+	reader := csv.NewReader(bufio.NewReader(file))
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, err
+		}
+		topics = append(topics, record[0])
+	}
+	return topics, nil
 }
 
 func enableCors(w *http.ResponseWriter) {
