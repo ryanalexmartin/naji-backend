@@ -52,12 +52,13 @@ func main() {
 	})
 
 	// check if certificate and key files exist
-	if _, err := os.Stat("cert.pem"); os.IsNotExist(err) {
-		log.Fatal("cert.pem file does not exist")
+	if _, err := os.Stat("/etc/letsencrypt/live/ws.naji.live/fullchain.pem"); os.IsNotExist(err) {
+		log.Println("Certificate and key files not found, starting server on :8080")
+		http.ListenAndServe(":8080", nil)
+	} else {
+		log.Println("Certificate and key files found, starting server on :443")
+		http.ListenAndServeTLS(":443", "/etc/letsencrypt/live/ws.naji.live/fullchain.pem", "/etc/letsencrypt/live/ws.naji.live/privkey.pem", nil)
 	}
-
-	log.Println("Server started on :80")
-	http.ListenAndServe(":80", nil)
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request, topics []string) {

@@ -17,7 +17,10 @@ COPY . .
 RUN go build -o main
 
 # Expose the application port
-EXPOSE 8080
+EXPOSE 80
+
+# Copy the let's encrypt certificates
+COPY /etc/letsencrypt/live/ws.naji.live/ /etc/letsencrypt/live/ws.naji.live/
 
 # Run the application
 CMD ["/app/main"]
