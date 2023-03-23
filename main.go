@@ -44,8 +44,20 @@ func main() {
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		handleConnections(w, r, topics)
 	})
-	log.Println("Server started on :8080")
-	http.ListenAndServe(":8080", nil)
+
+	// Handle health checks on "/" with a simple 200 response
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Println("Health check")
+	})
+
+	// check if certificate and key files exist
+	if _, err := os.Stat("cert.pem"); os.IsNotExist(err) {
+		log.Fatal("cert.pem file does not exist")
+	}
+
+	log.Println("Server started on :80")
+	http.ListenAndServe(":80", nil)
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request, topics []string) {
