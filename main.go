@@ -67,12 +67,6 @@ func onlineUsersHandler(w http.ResponseWriter, r *http.Request) {
 	enableCors(&w)
 	clientsLock.RLock()
 	onlineUsers := len(clients)
-	if onlineUsers < 4 {
-		onlineUsers = rand.Intn(3) + 1
-		if onlineUsers%2 == 1 {
-			onlineUsers++
-		}
-	}
 	clientsLock.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]int{"onlineUsers": onlineUsers})
@@ -195,8 +189,8 @@ func chatHandler(conn1 *websocket.Conn, conn2 *websocket.Conn, topics []string) 
 	cleanup := func() {
 		wg.Done()
 		wg.Wait()
-		conn1.Close()
-		conn2.Close()
+		removeClient(conn1)
+		removeClient(conn2)
 	}
 
 	go func() {
