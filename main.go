@@ -178,6 +178,8 @@ func relayMessages(src *websocket.Conn, dest *websocket.Conn, topics []string) {
 			}
 		}
 
+		log.Printf("User %v sent message: %s", src.RemoteAddr(), string(msg))
+
 		err = dest.WriteMessage(websocket.TextMessage, msg)
 		if err != nil {
 			log.Printf("Write message error: %v", err)
