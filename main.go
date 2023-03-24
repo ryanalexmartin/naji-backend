@@ -51,6 +51,8 @@ func main() {
 		fmt.Println("Health check")
 	})
 
+	http.HandleFunc("/online-users", onlineUsersHandler)
+
 	// check if certificate and key files exist
 	if _, err := os.Stat("/etc/letsencrypt/live/ws.naji.live/fullchain.pem"); os.IsNotExist(err) {
 		log.Println("Certificate and key files not found, starting server on :8080")
@@ -59,6 +61,15 @@ func main() {
 		log.Println("Certificate and key files found, starting server on :443")
 		http.ListenAndServeTLS(":443", "/etc/letsencrypt/live/ws.naji.live/fullchain.pem", "/etc/letsencrypt/live/ws.naji.live/privkey.pem", nil)
 	}
+}
+
+func onlineUsersHandler(w http.ResponseWriter, r *http.Request) {
+	enableCors(&w)
+	clientsLock.RLock()
+	onlineUsers := len(clients)
+	clientsLock.RUnlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{"onlineUsers": onlineUsers})
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request, topics []string) {
