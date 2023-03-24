@@ -68,7 +68,10 @@ func onlineUsersHandler(w http.ResponseWriter, r *http.Request) {
 	clientsLock.RLock()
 	onlineUsers := len(clients)
 	if onlineUsers < 15 {
-		onlineUsers = rand.Intn(3) + 12
+		onlineUsers = rand.Intn(9) + 3
+		if onlineUsers%2 == 1 {
+			onlineUsers++
+		}
 	}
 	clientsLock.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
