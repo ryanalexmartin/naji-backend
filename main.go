@@ -67,8 +67,8 @@ func onlineUsersHandler(w http.ResponseWriter, r *http.Request) {
 	enableCors(&w)
 	clientsLock.RLock()
 	onlineUsers := len(clients)
-	if onlineUsers < 15 {
-		onlineUsers = rand.Intn(9) + 3
+	if onlineUsers < 4 {
+		onlineUsers = rand.Intn(3) + 1
 		if onlineUsers%2 == 1 {
 			onlineUsers++
 		}
