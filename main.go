@@ -67,6 +67,10 @@ func onlineUsersHandler(w http.ResponseWriter, r *http.Request) {
 	enableCors(&w)
 	clientsLock.RLock()
 	onlineUsers := len(clients)
+	// If onlineUsers is less than 30, return a random int between 5 and 30
+	if onlineUsers < 30 {
+		onlineUsers = rand.Intn(25) + 5
+	}
 	clientsLock.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]int{"onlineUsers": onlineUsers})
