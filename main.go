@@ -91,22 +91,24 @@ func handleConnections(w http.ResponseWriter, r *http.Request, topics []string) 
 	matchmaking(conn, topics)
 }
 
-func requeueClient(conn *websocket.Conn, topics []string) {
-	waitingClients.Lock()
-	defer waitingClients.Unlock()
-
-	waitingClients.q = append(waitingClients.q, conn)
-	log.Printf("User %v added back to the waiting queue", conn.RemoteAddr())
-	matchmaking(conn, topics)
-}
-
 func matchmaking(conn *websocket.Conn, topics []string) {
 	waitingClients.Lock()
 	defer waitingClients.Unlock()
 
+	// Check if conn is already in the queue
+	for i, c := range waitingClients.q {
+		if c == conn {
+			waitingClients.q = append(waitingClients.q[:i], waitingClients.q[i+1:]...)
+			break
+		}
+	}
+
 	if len(waitingClients.q) > 0 {
+		// prevent the cleanup goroutine from running
 
 		conn2 := waitingClients.q[0]
+
+		// Remove the first element from the queue
 		waitingClients.q = waitingClients.q[1:]
 
 		randomTopic := topics[rand.Intn(len(topics))]
@@ -117,27 +119,28 @@ func matchmaking(conn *websocket.Conn, topics []string) {
 		conn2.WriteMessage(websocket.TextMessage, jsonMsg)
 
 		log.Printf("User %v connected with user %v", conn.RemoteAddr(), conn2.RemoteAddr())
-
 		go chatHandler(conn, conn2, topics)
 	} else {
 		waitingClients.q = append(waitingClients.q, conn)
-		go handleQueueUser(conn)
+
 		log.Printf("User %v added to the waiting queue", conn.RemoteAddr())
 		log.Printf("Waiting queue length: %v", len(waitingClients.q))
+		// Start a new goroutine to clean up the queue in case the client disconnects
+		go cleanupQueue(conn)
+
 	}
 }
 
-// if user disconnects while in queue, remove immediately from waitingClients
-func handleQueueUser(src *websocket.Conn) {
+func cleanupQueue(src *websocket.Conn) {
 	log.Printf("handleQueueUser")
-	defer src.Close()
 
 	for {
 		_, _, err := src.ReadMessage()
+		// If the client disconnects, remove them from the queue
 		if err != nil {
 			removeClient(src)
 			log.Printf("User %v removed from queue", src.RemoteAddr())
-			break
+			return
 		}
 	}
 }
