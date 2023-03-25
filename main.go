@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -21,17 +22,55 @@ type message struct {
 	Text string `json:"text"`
 }
 
-var clients = make(map[*websocket.Conn]bool)
-var clientsLock = sync.RWMutex{}
-var waitingClients = []*websocket.Conn{}
-var waitingClientsLock = sync.Mutex{}
+var clients = struct {
+	sync.RWMutex
+	m map[*websocket.Conn]bool
+}{m: make(map[*websocket.Conn]bool)}
+
+var waitingClients = struct {
+	sync.Mutex
+	q []*websocket.Conn
+}{}
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
+	CheckOrigin:     func(r *http.Request) bool { return true },
+}
+
+func handleQueuedClients(ctx context.Context) {
+	// ping clients in the waiting queue every 5 seconds, to keep the connection alive
+	// Send a message to every client that is currently connected,
+	// and if the client is not responding, remove it from waitingClients.q
+	pingTicker := time.NewTicker(5 * time.Second)
+	defer pingTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("handleQueuedClients stopped due to context cancellation")
+			return
+		case <-pingTicker.C:
+			log.Printf("Waiting queue length: %v",
+				len(waitingClients.q))
+			waitingClients.Lock()
+			activeClients := make([]*websocket.Conn, 0, len(waitingClients.q))
+
+			for _, waitingClient := range waitingClients.q {
+				pingMsg, _ := json.Marshal(map[string]string{"type": "ping"})
+				err := waitingClient.WriteMessage(websocket.TextMessage, pingMsg)
+				if err != nil {
+					waitingClient.Close()
+					log.Printf("Client %v removed from the waiting queue due to no response", waitingClient.RemoteAddr())
+				} else {
+					activeClients = append(activeClients, waitingClient)
+				}
+			}
+
+			waitingClients.q = activeClients
+			waitingClients.Unlock()
+		}
+	}
 }
 
 func main() {
@@ -45,7 +84,6 @@ func main() {
 		handleConnections(w, r, topics)
 	})
 
-	// Handle health checks on "/" with a simple 200 response
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Println("Health check")
@@ -53,7 +91,12 @@ func main() {
 
 	http.HandleFunc("/online-users", onlineUsersHandler)
 
-	// check if certificate and key files exist
+	// run goroutine to handle queued clients, this goroutine will run forever
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go handleQueuedClients(ctx)
+
 	if _, err := os.Stat("/etc/letsencrypt/live/ws.naji.live/fullchain.pem"); os.IsNotExist(err) {
 		log.Println("Certificate and key files not found, starting server on :8080")
 		http.ListenAndServe(":8080", nil)
@@ -61,13 +104,14 @@ func main() {
 		log.Println("Certificate and key files found, starting server on :443")
 		http.ListenAndServeTLS(":443", "/etc/letsencrypt/live/ws.naji.live/fullchain.pem", "/etc/letsencrypt/live/ws.naji.live/privkey.pem", nil)
 	}
+
 }
 
 func onlineUsersHandler(w http.ResponseWriter, r *http.Request) {
 	enableCors(&w)
-	clientsLock.RLock()
-	onlineUsers := len(clients)
-	clientsLock.RUnlock()
+	clients.RLock()
+	onlineUsers := len(clients.m)
+	clients.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]int{"onlineUsers": onlineUsers})
 }
@@ -79,11 +123,10 @@ func handleConnections(w http.ResponseWriter, r *http.Request, topics []string) 
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
 	}
-	//	defer conn.Close()
 
-	clientsLock.Lock()
-	clients[conn] = true
-	clientsLock.Unlock()
+	clients.Lock()
+	clients.m[conn] = true
+	clients.Unlock()
 
 	log.Printf("New user connected: %v", conn.RemoteAddr())
 
@@ -91,21 +134,22 @@ func handleConnections(w http.ResponseWriter, r *http.Request, topics []string) 
 }
 
 func requeueClient(conn *websocket.Conn, topics []string) {
-	waitingClientsLock.Lock()
-	defer waitingClientsLock.Unlock()
+	waitingClients.Lock()
+	defer waitingClients.Unlock()
 
-	waitingClients = append(waitingClients, conn)
+	waitingClients.q = append(waitingClients.q, conn)
 	log.Printf("User %v added back to the waiting queue", conn.RemoteAddr())
 	matchmaking(conn, topics)
 }
 
 func matchmaking(conn *websocket.Conn, topics []string) {
-	waitingClientsLock.Lock()
-	defer waitingClientsLock.Unlock()
+	waitingClients.Lock()
+	defer waitingClients.Unlock()
 
-	if len(waitingClients) > 0 {
-		conn2 := waitingClients[0]
-		waitingClients = waitingClients[1:]
+	if len(waitingClients.q) > 0 {
+
+		conn2 := waitingClients.q[0]
+		waitingClients.q = waitingClients.q[1:]
 
 		randomTopic := topics[rand.Intn(len(topics))]
 		connectedMsg := message{Type: "status", Text: fmt.Sprintf("Now connected! Let's talk about %s", randomTopic)}
@@ -118,30 +162,27 @@ func matchmaking(conn *websocket.Conn, topics []string) {
 
 		go chatHandler(conn, conn2, topics)
 	} else {
-		waitingClients = append(waitingClients, conn)
+		waitingClients.q = append(waitingClients.q, conn)
 		log.Printf("User %v added to the waiting queue", conn.RemoteAddr())
+		log.Printf("Waiting queue length: %v", len(waitingClients.q))
 	}
 }
 
 func removeClient(conn *websocket.Conn) {
-	clientsLock.Lock()
-	delete(clients, conn)
-	clientsLock.Unlock()
+	clients.Lock()
+	delete(clients.m, conn)
+	clients.Unlock()
 
-	waitingClientsLock.Lock()
-	index := -1
-	for i, waitingClient := range waitingClients {
+	waitingClients.Lock()
+	defer waitingClients.Unlock()
+	for i, waitingClient := range waitingClients.q {
 		if waitingClient == conn {
-			index = i
+			waitingClients.q = append(waitingClients.q[:i], waitingClients.q[i+1:]...)
 			break
 		}
 	}
-	if index != -1 {
-		waitingClients = append(waitingClients[:index], waitingClients[index+1:]...)
-	}
-	waitingClientsLock.Unlock()
 
-	log.Printf("Client %v removed", conn.RemoteAddr())
+	// log.Printf("Client %v removed", conn.RemoteAddr())
 }
 
 func relayMessages(src *websocket.Conn, dest *websocket.Conn, topics []string) {
