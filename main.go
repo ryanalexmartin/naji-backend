@@ -91,7 +91,6 @@ func main() {
 
 	http.HandleFunc("/online-users", onlineUsersHandler)
 
-	// run goroutine to handle queued clients, this goroutine will run forever
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -181,8 +180,7 @@ func removeClient(conn *websocket.Conn) {
 			break
 		}
 	}
-
-	// log.Printf("Client %v removed", conn.RemoteAddr())
+	log.Printf("Client %v removed", conn.RemoteAddr())
 }
 
 func relayMessages(src *websocket.Conn, dest *websocket.Conn, topics []string) {
