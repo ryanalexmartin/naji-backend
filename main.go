@@ -21,6 +21,11 @@ type message struct {
 	Text string `json:"text"`
 }
 
+type client struct {
+	conn      *websocket.Conn
+	connected bool
+}
+
 var clients = struct {
 	sync.RWMutex
 	m map[*websocket.Conn]bool
@@ -28,7 +33,7 @@ var clients = struct {
 
 var waitingClients = struct {
 	sync.Mutex
-	q []*websocket.Conn
+	q []client
 }{}
 
 var upgrader = websocket.Upgrader{
@@ -45,7 +50,12 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		handleConnections(w, r, topics)
+		conn, err := handleWebsocket(w, r, topics)
+		if err != nil {
+			log.Printf("Failed to handle WebSocket connection: %v", err)
+			return
+		}
+		matchmaking(conn, topics)
 	})
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -74,12 +84,12 @@ func getNumberOnlineUsers(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]int{"onlineUsers": onlineUsers})
 }
 
-func handleConnections(w http.ResponseWriter, r *http.Request, topics []string) {
+func handleWebsocket(w http.ResponseWriter, r *http.Request, topics []string) (*websocket.Conn, error) {
 	enableCors(&w)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
-		return
+		return nil, err
 	}
 
 	clients.Lock()
@@ -88,59 +98,64 @@ func handleConnections(w http.ResponseWriter, r *http.Request, topics []string) 
 
 	log.Printf("New user connected: %v", conn.RemoteAddr())
 
-	matchmaking(conn, topics)
+	return conn, nil
 }
 
+// STOPPING here today.  Note:  We are close, we just need to actually use the
+// connected bool we made in the struct somehow.
 func matchmaking(conn *websocket.Conn, topics []string) {
 	waitingClients.Lock()
 	defer waitingClients.Unlock()
 
-	// Check if conn is already in the queue
-	for i, c := range waitingClients.q {
-		if c == conn {
-			waitingClients.q = append(waitingClients.q[:i], waitingClients.q[i+1:]...)
-			break
-		}
-	}
-
 	if len(waitingClients.q) > 0 {
-		// prevent the cleanup goroutine from running
+		// Find the first waiting client that is not connected
+		var index int
+		for i, c := range waitingClients.q {
+			if !c.connected {
+				index = i
+				break
+			}
+		}
 
-		conn2 := waitingClients.q[0]
-
-		// Remove the first element from the queue
-		waitingClients.q = waitingClients.q[1:]
+		conn2 := waitingClients.q[index]
+		waitingClients.q[index].connected = true
 
 		randomTopic := topics[rand.Intn(len(topics))]
 		connectedMsg := message{Type: "status", Text: fmt.Sprintf("Now connected! Let's talk about %s", randomTopic)}
 		jsonMsg, _ := json.Marshal(connectedMsg)
 
 		conn.WriteMessage(websocket.TextMessage, jsonMsg)
-		conn2.WriteMessage(websocket.TextMessage, jsonMsg)
+		conn2.conn.WriteMessage(websocket.TextMessage, jsonMsg)
 
-		log.Printf("User %v connected with user %v", conn.RemoteAddr(), conn2.RemoteAddr())
-		go chatHandler(conn, conn2, topics)
+		log.Printf("User %v connected with user %v", conn.RemoteAddr(), conn2.conn.RemoteAddr())
+		go chatHandler(conn, conn2.conn, topics)
 	} else {
-		waitingClients.q = append(waitingClients.q, conn)
+		waitingClients.q = append(waitingClients.q, client{conn: conn, connected: false})
 
 		log.Printf("User %v added to the waiting queue", conn.RemoteAddr())
 		log.Printf("Waiting queue length: %v", len(waitingClients.q))
 		// Start a new goroutine to clean up the queue in case the client disconnects
-		go cleanupQueue(conn)
 
+		stop := make(chan struct{})
+		go cleanupQueue(conn, stop)
 	}
 }
 
-func cleanupQueue(src *websocket.Conn) {
-	log.Printf("handleQueueUser")
-
+func cleanupQueue(conn *websocket.Conn, stop chan struct{}) {
 	for {
-		_, _, err := src.ReadMessage()
-		// If the client disconnects, remove them from the queue
-		if err != nil {
-			removeClient(src)
-			log.Printf("User %v removed from queue", src.RemoteAddr())
+		select {
+		case <-stop:
+			// If the stop channel is closed, return to stop the goroutine
+			log.Printf("cleanupQueue stopped for %v", conn.RemoteAddr())
 			return
+		default:
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				// If the client disconnects, remove them from the queue and return
+				removeClient(conn)
+				log.Printf("User %v removed from queue", conn.RemoteAddr())
+				return
+			}
 		}
 	}
 }
@@ -149,7 +164,7 @@ func removeClient(conn *websocket.Conn) {
 	waitingClients.Lock()
 	defer waitingClients.Unlock()
 	for i, waitingClient := range waitingClients.q {
-		if waitingClient == conn {
+		if waitingClient.conn == conn {
 			waitingClients.q = append(waitingClients.q[:i], waitingClients.q[i+1:]...)
 			break
 		}
