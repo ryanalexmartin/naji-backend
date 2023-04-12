@@ -25,3 +25,4 @@
         Create a function to create a new room with a unique ID and an empty Users map
 
 You can use this compact representation to communicate the progress to future ChatGPT prompts concisely, staying within the token limit.
+

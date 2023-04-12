@@ -13,7 +13,7 @@ import (
 
 func TestWebSocketUpgrade(t *testing.T) {
 	// Create an HTTP test server
-	ts := httptest.NewServer(http.HandlerFunc(upgradeToWebSocket))
+	ts := httptest.NewServer(http.HandlerFunc(UpgradeToWebSocket))
 	defer ts.Close()
 
 	// Prepare a WebSocket connection request
@@ -37,7 +37,7 @@ func TestHandleWebSocketMessage(t *testing.T) {
 	// Create an HTTP test server
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, _ := upgrader.Upgrade(w, r, nil)
-		handleWebSocketMessage(conn)
+		HandleWebSocketMessage(conn)
 	}))
 	defer ts.Close()
 
@@ -77,7 +77,7 @@ func TestHandleWebSocketDisconnection(t *testing.T) {
 	// Create an HTTP test server
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, _ := upgrader.Upgrade(w, r, nil)
-		handleWebSocketDisconnection(conn, &clientDisconnected)
+		HandleWebSocketDisconnection(conn, &clientDisconnected)
 	}))
 	defer ts.Close()
 

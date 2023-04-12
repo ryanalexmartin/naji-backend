@@ -1,4 +1,4 @@
-module github.com/ryanalexmartin/omegle-clone-backend
+module backend
 
 go 1.20
 

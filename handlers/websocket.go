@@ -15,7 +15,7 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func upgradeToWebSocket(w http.ResponseWriter, r *http.Request) {
+func UpgradeToWebSocket(w http.ResponseWriter, r *http.Request) {
 	_, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		http.Error(w, "Failed to upgrade to WebSocket", http.StatusInternalServerError)
@@ -23,7 +23,7 @@ func upgradeToWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func handleWebSocketMessage(conn *websocket.Conn) {
+func HandleWebSocketMessage(conn *websocket.Conn) {
 	defer conn.Close()
 
 	for {
@@ -41,7 +41,7 @@ func handleWebSocketMessage(conn *websocket.Conn) {
 	}
 }
 
-func handleWebSocketDisconnection(conn *websocket.Conn, clientDisconnected *int32) {
+func HandleWebSocketDisconnection(conn *websocket.Conn, clientDisconnected *int32) {
 	defer conn.Close()
 
 	for {

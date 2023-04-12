@@ -1,8 +1,13 @@
 package models
 
 import (
-	"github.com/gorilla/websocket"
+	"backend/server"
+	"net/http"
+	"net/url"
 	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestUserCreation(t *testing.T) {
@@ -25,5 +30,30 @@ func TestUserCreation(t *testing.T) {
 	// Check if the user's Room field is initially empty
 	if user.Room != "" {
 		t.Error("User's room ID should be empty initially")
+	}
+}
+
+func TestUserWebSocketConnection(t *testing.T) {
+	addr := "localhost:8081"
+	go server.StartServer(addr)
+	time.Sleep(500 * time.Millisecond)
+
+	u := url.URL{Scheme: "ws", Host: addr, Path: "/ws"}
+	header := make(http.Header)
+
+	dialer := &websocket.Dialer{}
+	conn, _, err := dialer.Dial(u.String(), header)
+	if err != nil {
+		t.Fatalf("Failed to connect to WebSocket: %v", err)
+	}
+	defer conn.Close()
+
+	user := NewUser(conn)
+	if user.Conn == nil {
+		t.Error("User WebSocket connection is nil")
+	}
+
+	if err := user.Conn.WriteMessage(1, []byte("Test message")); err != nil {
+		t.Errorf("Failed to write message through WebSocket: %v", err)
 	}
 }

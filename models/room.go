@@ -28,3 +28,11 @@ func (r *Room) RemoveUser(userID string) {
 	}
 }
 
+func (r *Room) UserCount() int {
+	userCount := 0
+	r.Users.Range(func(_, _ interface{}) bool {
+		userCount++
+		return true
+	})
+	return userCount
+}

@@ -7,7 +7,8 @@ import (
 
 type User struct {
 	ID   string
-	Conn *websocket.Conn
+	Conn MessageWriter
+	//	Conn *websocket.Conn
 	Room string
 }
 
@@ -16,4 +17,8 @@ func NewUser(conn *websocket.Conn) *User {
 		ID:   uuid.New().String(),
 		Conn: conn,
 	}
+}
+
+type MessageWriter interface {
+	WriteMessage(messageType int, data []byte) error
 }
